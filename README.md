@@ -1,6 +1,8 @@
-# Pomodorable
+<div align="center">
+  <img src="assets/pomo_logo.png" width="200px" />
+</div>
 
-![A logo of a happy little Tomato](/assets/pomo_logo.png)
+# Pomodorable
 
 A fun little pomodoro app written in Rust.
 
