@@ -1,10 +1,15 @@
 use iced::{
-    Color, Element, Length, Pixels, Size, Subscription, Task, Theme,
+    Element, Length, Pixels, Size, Subscription, Task, Theme,
     font::{self, Family},
-    theme::Palette,
-    widget::container,
+    keyboard,
+    time::{Duration, Instant},
+    widget::{Text, button, column, container, row, text},
     window,
 };
+use pomodori_manager::PomodoriManager;
+
+mod pomodori_manager;
+mod timer_manager;
 
 pub fn main() -> iced::Result {
     iced::application("Pomodorable", Pomodorable::update, Pomodorable::view)
@@ -50,23 +55,39 @@ fn window_settings() -> iced::window::Settings {
     }
 }
 
+#[derive(Default)]
+enum State {
+    #[default]
+    Idle,
+    Running {
+        last_tick: Instant,
+    },
+}
+
 // #[derive(Default)]
 pub struct Pomodorable {
     theme: Theme,
-    currentSize: Size,
+    pomo: PomodoriManager,
+    state: State,
+    duration: Duration,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum Message {
     CloseWindow,
-    WindowResized(iced::Size),
+    Tick(Instant),
+    ToggleTimer,
+    ResetTimer,
+    SkipInterval,
 }
 
 impl Pomodorable {
     fn new() -> (Pomodorable, Task<Message>) {
         let mouser = Pomodorable {
             theme: Theme::GruvboxDark,
-            currentSize: Size::default(),
+            pomo: PomodoriManager::new(),
+            state: State::Idle,
+            duration: Duration::default(),
         };
 
         (mouser, Task::none())
@@ -77,15 +98,86 @@ impl Pomodorable {
 
         match message {
             Message::CloseWindow => window::get_latest().and_then(window::close),
-            Message::WindowResized(size) => {
-                self.currentSize = size;
+            Message::Tick(t) => {
+                if let State::Running { last_tick } = &mut self.state {
+                    self.duration += t - *last_tick;
+                    *last_tick = t;
+
+                    if self.duration > self.pomo.get_current_interval() {
+                        self.pomo.next();
+                        self.duration = Duration::default();
+                    }
+                }
+                Task::none()
+            }
+            Message::ToggleTimer => {
+                self.state = match self.state {
+                    State::Idle => State::Running {
+                        last_tick: Instant::now(),
+                    },
+                    State::Running { .. } => State::Idle,
+                };
+
+                Task::none()
+            }
+            Message::ResetTimer => {
+                self.pomo.reset();
+                self.state = State::Idle;
+                self.duration = Duration::default();
+
+                Task::none()
+            }
+            Message::SkipInterval => {
+                self.pomo.next();
+                self.duration = Duration::default();
+
                 Task::none()
             }
         }
     }
 
     fn view(&self) -> Element<Message> {
-        container("Hello, Pomodorable").center(Length::Fill).into()
+        const MINUTE: u64 = 60;
+        const HOUR: u64 = 60 * MINUTE;
+
+        let target = self.pomo.get_current_interval().as_secs();
+        let seconds = self.duration.as_secs();
+
+        container(column![
+            text!(
+                "{} - {}",
+                if self.pomo.is_break() {
+                    "Break time!"
+                } else {
+                    "Work work"
+                },
+                self.pomo.get_interval_count()
+            ),
+            container(
+                text!(
+                    "{:0>2}:{:0>2}",
+                    (((target - seconds) % HOUR) / MINUTE),
+                    (MINUTE - seconds) % MINUTE,
+                )
+                .size(40),
+            )
+            .center(Length::FillPortion(3)),
+            container(
+                row![
+                    button(match self.state {
+                        State::Idle => "Start",
+                        State::Running { .. } => "Stop",
+                    })
+                    .on_press(Message::ToggleTimer),
+                    button("Reset").on_press(Message::ResetTimer),
+                    button("Skip").on_press(Message::SkipInterval)
+                ]
+                .spacing(4)
+            )
+            .center(Length::FillPortion(2))
+        ])
+        .center(Length::Fill)
+        .into()
     }
 
     fn theme(&self) -> Theme {
@@ -93,14 +185,24 @@ impl Pomodorable {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch(vec![
-            iced::keyboard::on_key_press(|key, modifiers| match (key, modifiers) {
-                (iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape), _) => {
-                    Some(Message::CloseWindow)
-                }
+        let tick = match self.state {
+            State::Idle => Subscription::none(),
+            State::Running { .. } => {
+                iced::time::every(iced::time::milliseconds(100)).map(Message::Tick)
+            }
+        };
+
+        let hotkeys = keyboard::on_key_press(|key, _modifiers| {
+            use keyboard::key;
+            match key.as_ref() {
+                keyboard::Key::Named(key::Named::Escape) => Some(Message::CloseWindow),
+                keyboard::Key::Named(key::Named::Space) => Some(Message::ToggleTimer),
+                keyboard::Key::Character("r") => Some(Message::ResetTimer),
+
                 _ => None,
-            }),
-            iced::window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
-        ])
+            }
+        });
+
+        Subscription::batch(vec![hotkeys, tick])
     }
 }
