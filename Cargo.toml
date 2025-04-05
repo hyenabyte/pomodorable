@@ -4,6 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-chrono = "0.4.40"
-iced = {git = "https://github.com/iced-rs/iced.git", features=["tokio"]}
-timer = "0.2.0"
+iced = {git = "https://github.com/iced-rs/iced.git", features=["tokio", "svg"]}
+rand = "0.9.0"

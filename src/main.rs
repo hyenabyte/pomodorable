@@ -1,14 +1,16 @@
 use iced::{
-    Element, Length, Pixels, Size, Subscription, Task, Theme,
+    Element, Length, Pixels, Size, Subscription, Task,
     font::{self, Family},
     keyboard,
     time::{Duration, Instant},
-    widget::{Text, button, column, container, row, text},
+    widget::{button, column, container, progress_bar, row, svg, text, tooltip},
     window,
 };
-use pomodori_manager::PomodoriManager;
 
-mod pomodori_manager;
+use pomodori::Pomodori;
+
+mod pomodori;
+mod theme;
 mod timer_manager;
 
 pub fn main() -> iced::Result {
@@ -36,16 +38,16 @@ fn settings() -> iced::Settings {
 fn window_settings() -> iced::window::Settings {
     window::Settings {
         transparent: false,
-        decorations: false,
+        decorations: true,
         resizable: false,
         position: window::Position::Centered,
         size: Size {
-            width: 200.0,
-            height: 300.0,
+            width: 250.0,
+            height: 350.0,
         },
         maximized: true,
         fullscreen: false,
-        level: window::Level::AlwaysOnTop,
+        // level: window::Level::AlwaysOnTop,
         // exit_on_close_request: true,
         // platform_specific: window::settings::PlatformSpecific {
         //     application_id: "mouser".to_string(),
@@ -66,8 +68,8 @@ enum State {
 
 // #[derive(Default)]
 pub struct Pomodorable {
-    theme: Theme,
-    pomo: PomodoriManager,
+    theme: iced::Theme,
+    pomodori: Pomodori,
     state: State,
     duration: Duration,
 }
@@ -79,13 +81,20 @@ enum Message {
     ToggleTimer,
     ResetTimer,
     SkipInterval,
+    Settings,
 }
 
 impl Pomodorable {
     fn new() -> (Pomodorable, Task<Message>) {
         let mouser = Pomodorable {
-            theme: Theme::GruvboxDark,
-            pomo: PomodoriManager::new(),
+            theme: theme::Everforest::light_medium(),
+            pomodori: Pomodori::with_settings(pomodori::Settings {
+                focus_length: 2,
+                short_break_length: 1,
+                long_break_length: 2,
+                long_break_interval: 3,
+                interval_target: 5,
+            }),
             state: State::Idle,
             duration: Duration::default(),
         };
@@ -99,12 +108,16 @@ impl Pomodorable {
         match message {
             Message::CloseWindow => window::get_latest().and_then(window::close),
             Message::Tick(t) => {
-                if let State::Running { last_tick } = &mut self.state {
+                if let pomodori::State::Finished = self.pomodori.get_state() {
+                    // Pomodori finished stop the timer
+                    self.state = State::Idle;
+                    self.duration = Duration::default();
+                } else if let State::Running { last_tick } = &mut self.state {
                     self.duration += t - *last_tick;
                     *last_tick = t;
 
-                    if self.duration > self.pomo.get_current_interval() {
-                        self.pomo.next();
+                    if self.duration > self.pomodori.get_current_interval() {
+                        self.pomodori.next();
                         self.duration = Duration::default();
                     }
                 }
@@ -112,75 +125,180 @@ impl Pomodorable {
             }
             Message::ToggleTimer => {
                 self.state = match self.state {
-                    State::Idle => State::Running {
-                        last_tick: Instant::now(),
-                    },
+                    State::Idle => {
+                        match self.pomodori.get_state() {
+                            pomodori::State::Ready => {
+                                self.pomodori.next();
+                                ()
+                            }
+                            pomodori::State::Finished => {
+                                self.duration = Duration::default();
+                                self.pomodori.reset();
+                                self.pomodori.next();
+                                ()
+                            }
+                            _ => (),
+                        }
+
+                        State::Running {
+                            last_tick: Instant::now(),
+                        }
+                    }
                     State::Running { .. } => State::Idle,
                 };
 
                 Task::none()
             }
             Message::ResetTimer => {
-                self.pomo.reset();
+                self.pomodori.reset();
                 self.state = State::Idle;
                 self.duration = Duration::default();
 
                 Task::none()
             }
             Message::SkipInterval => {
-                self.pomo.next();
-                self.duration = Duration::default();
+                match self.pomodori.get_state() {
+                    pomodori::State::Finished => (),
+                    _ => {
+                        self.pomodori.next();
+                        self.duration = Duration::default();
+                    }
+                }
 
                 Task::none()
             }
+            Message::Settings => todo!(),
         }
     }
 
     fn view(&self) -> Element<Message> {
-        const MINUTE: u64 = 60;
-        const HOUR: u64 = 60 * MINUTE;
+        const SECOND: u128 = 1000;
+        const MINUTE: u128 = 60 * SECOND;
+        const HOUR: u128 = 60 * MINUTE;
 
-        let target = self.pomo.get_current_interval().as_secs();
-        let seconds = self.duration.as_secs();
+        let target = self.pomodori.get_current_interval().as_millis();
+        let millis = self.duration.as_millis();
 
-        container(column![
-            text!(
-                "{} - {}",
-                if self.pomo.is_break() {
-                    "Break time!"
-                } else {
-                    "Work work"
-                },
-                self.pomo.get_interval_count()
-            ),
-            container(
-                text!(
-                    "{:0>2}:{:0>2}",
-                    (((target - seconds) % HOUR) / MINUTE),
-                    (MINUTE - seconds) % MINUTE,
-                )
-                .size(40),
-            )
-            .center(Length::FillPortion(3)),
-            container(
+        let progress = millis as f32 / target as f32;
+
+        let seconds = ((target - millis) % MINUTE) / SECOND;
+        let minutes = ((target - millis) % HOUR) / MINUTE;
+
+        container(
+            column![
                 row![
-                    button(match self.state {
-                        State::Idle => "Start",
-                        State::Running { .. } => "Stop",
-                    })
-                    .on_press(Message::ToggleTimer),
-                    button("Reset").on_press(Message::ResetTimer),
-                    button("Skip").on_press(Message::SkipInterval)
+                    // text!(
+                    //     "{}/{}",
+                    //     self.pomodori.get_interval_count(),
+                    //     self.pomodori.get_interval_target()
+                    // ),
+                    container("Pomodorable v0.1")
+                        .style(container::primary)
+                        .padding(4)
+                        .center_x(Length::Fill)
+                ],
+                column![
+                    container(
+                        text!(
+                            "{}",
+                            match self.pomodori.get_state() {
+                                pomodori::State::Ready => "Ready",
+                                pomodori::State::Focus => "Focus",
+                                pomodori::State::Break => "Short break",
+                                pomodori::State::LongBreak => "Long break",
+                                pomodori::State::Finished => "Finished",
+                            },
+                        )
+                        .size(18)
+                    )
+                    .center_x(Length::Fill),
+                ],
+                // row![
+                //     container(text!("{}", self.pomodori.get_quote()).size(14),)
+                //         .center(Length::Fill),
+                // ],
+                row![container(svg("assets/pomo_logo.svg").width(150)).center(Length::Fill)],
+                row![
+                    container(text!("{}", self.pomodori.get_quote()).size(14),)
+                        .center_x(Length::Fill),
+                ],
+                row![
+                    container(text!("{:0>2}:{:0>2}", minutes, seconds).size(25),)
+                        .padding(4)
+                        .style(container::bordered_box)
+                        .center_x(Length::FillPortion(2)),
+                    container(
+                        text!(
+                            "{}/{}",
+                            self.pomodori.get_interval_count() + 1,
+                            self.pomodori.get_interval_target()
+                        )
+                        .size(25),
+                    )
+                    .padding(4)
+                    .style(container::bordered_box)
+                    .center_x(Length::FillPortion(1))
+                ]
+                .spacing(4),
+                row![progress_bar(0.0..=1.0, progress).girth(4)],
+                row![
+                    tooltip(
+                        button(svg("assets/icons/restart.svg")).on_press_maybe(
+                            match self.pomodori.get_state() {
+                                pomodori::State::Ready => None,
+                                _ => Some(Message::ResetTimer),
+                            }
+                        ),
+                        container("Reset [R]")
+                            .padding(4)
+                            .style(container::rounded_box),
+                        tooltip::Position::Top,
+                    ),
+                    tooltip(
+                        button(match self.state {
+                            State::Idle => svg("assets/icons/play.svg"),
+                            State::Running { .. } => svg("assets/icons/pause.svg"),
+                        })
+                        .style(button::success)
+                        .on_press(Message::ToggleTimer),
+                        container(match self.state {
+                            State::Idle => "Start [Space]",
+                            State::Running { .. } => "Pause [Space]",
+                        })
+                        .padding(4)
+                        .style(container::rounded_box),
+                        tooltip::Position::Top,
+                    ),
+                    tooltip(
+                        button(svg("assets/icons/skip-next.svg")).on_press_maybe(
+                            match self.pomodori.get_state() {
+                                pomodori::State::Finished => None,
+                                _ => Some(Message::SkipInterval),
+                            }
+                        ),
+                        container("Skip current interval [N]")
+                            .padding(4)
+                            .style(container::rounded_box),
+                        tooltip::Position::Top,
+                    ),
+                    tooltip(
+                        button(svg("assets/icons/settings.svg")).on_press(Message::Settings),
+                        container("Settings [S]")
+                            .padding(4)
+                            .style(container::rounded_box),
+                        tooltip::Position::Top,
+                    ),
                 ]
                 .spacing(4)
-            )
-            .center(Length::FillPortion(2))
-        ])
+            ]
+            .spacing(4),
+        )
+        .padding(4)
         .center(Length::Fill)
         .into()
     }
 
-    fn theme(&self) -> Theme {
+    fn theme(&self) -> iced::Theme {
         self.theme.clone()
     }
 
@@ -198,6 +316,8 @@ impl Pomodorable {
                 keyboard::Key::Named(key::Named::Escape) => Some(Message::CloseWindow),
                 keyboard::Key::Named(key::Named::Space) => Some(Message::ToggleTimer),
                 keyboard::Key::Character("r") => Some(Message::ResetTimer),
+                keyboard::Key::Character("n") => Some(Message::SkipInterval),
+                keyboard::Key::Character("s") => Some(Message::Settings),
 
                 _ => None,
             }
