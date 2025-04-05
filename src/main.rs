@@ -1,5 +1,5 @@
 use iced::{
-    Element, Length, Pixels, Size, Subscription, Task,
+    Alignment, Element, Length, Pixels, Size, Subscription, Task,
     font::{self, Family},
     keyboard,
     time::{Duration, Instant},
@@ -87,14 +87,15 @@ enum Message {
 impl Pomodorable {
     fn new() -> (Pomodorable, Task<Message>) {
         let mouser = Pomodorable {
-            theme: theme::Everforest::light_medium(),
-            pomodori: Pomodori::with_settings(pomodori::Settings {
-                focus_length: 2,
-                short_break_length: 1,
-                long_break_length: 2,
-                long_break_interval: 3,
-                interval_target: 5,
-            }),
+            theme: theme::Everforest::dark_medium(),
+            pomodori: Pomodori::new(),
+            // pomodori: Pomodori::with_settings(pomodori::Settings {
+            //     focus_length: 2,
+            //     short_break_length: 1,
+            //     long_break_length: 2,
+            //     long_break_interval: 3,
+            //     interval_target: 5,
+            // }),
             state: State::Idle,
             duration: Duration::default(),
         };
@@ -103,8 +104,6 @@ impl Pomodorable {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        println!("{:?}", message);
-
         match message {
             Message::CloseWindow => window::get_latest().and_then(window::close),
             Message::Tick(t) => {
@@ -150,9 +149,14 @@ impl Pomodorable {
                 Task::none()
             }
             Message::ResetTimer => {
-                self.pomodori.reset();
-                self.state = State::Idle;
-                self.duration = Duration::default();
+                match self.pomodori.get_state() {
+                    pomodori::State::Ready => (),
+                    _ => {
+                        self.pomodori.reset();
+                        self.state = State::Idle;
+                        self.duration = Duration::default();
+                    }
+                }
 
                 Task::none()
             }
@@ -172,6 +176,9 @@ impl Pomodorable {
     }
 
     fn view(&self) -> Element<Message> {
+        const PADDING: u16 = 4;
+        const SPACING: u32 = 4;
+
         const SECOND: u128 = 1000;
         const MINUTE: u128 = 60 * SECOND;
         const HOUR: u128 = 60 * MINUTE;
@@ -187,14 +194,9 @@ impl Pomodorable {
         container(
             column![
                 row![
-                    // text!(
-                    //     "{}/{}",
-                    //     self.pomodori.get_interval_count(),
-                    //     self.pomodori.get_interval_target()
-                    // ),
                     container("Pomodorable v0.1")
                         .style(container::primary)
-                        .padding(4)
+                        .padding(PADDING)
                         .center_x(Length::Fill)
                 ],
                 column![
@@ -211,20 +213,25 @@ impl Pomodorable {
                         )
                         .size(18)
                     )
+                    .padding(PADDING)
+                    .style(container::bordered_box)
                     .center_x(Length::Fill),
                 ],
-                // row![
-                //     container(text!("{}", self.pomodori.get_quote()).size(14),)
-                //         .center(Length::Fill),
-                // ],
-                row![container(svg("assets/pomo_logo.svg").width(150)).center(Length::Fill)],
+                row![
+                    container(svg("assets/pomo_logo.svg").width(150))
+                        .style(container::bordered_box)
+                        .center(Length::Fill)
+                ],
                 row![
                     container(text!("{}", self.pomodori.get_quote()).size(14),)
+                        .style(container::bordered_box)
+                        .height(50)
+                        .align_y(Alignment::Center)
                         .center_x(Length::Fill),
                 ],
                 row![
-                    container(text!("{:0>2}:{:0>2}", minutes, seconds).size(25),)
-                        .padding(4)
+                    container(text!("{:0>2}:{:0>2}", minutes, seconds).size(20),)
+                        .padding(PADDING)
                         .style(container::bordered_box)
                         .center_x(Length::FillPortion(2)),
                     container(
@@ -233,14 +240,14 @@ impl Pomodorable {
                             self.pomodori.get_interval_count() + 1,
                             self.pomodori.get_interval_target()
                         )
-                        .size(25),
+                        .size(20),
                     )
-                    .padding(4)
+                    .padding(PADDING)
                     .style(container::bordered_box)
                     .center_x(Length::FillPortion(1))
                 ]
-                .spacing(4),
-                row![progress_bar(0.0..=1.0, progress).girth(4)],
+                .spacing(SPACING),
+                row![progress_bar(0.0..=1.0, progress).girth(SPACING)],
                 row![
                     tooltip(
                         button(svg("assets/icons/restart.svg")).on_press_maybe(
@@ -250,7 +257,7 @@ impl Pomodorable {
                             }
                         ),
                         container("Reset [R]")
-                            .padding(4)
+                            .padding(PADDING)
                             .style(container::rounded_box),
                         tooltip::Position::Top,
                     ),
@@ -265,7 +272,7 @@ impl Pomodorable {
                             State::Idle => "Start [Space]",
                             State::Running { .. } => "Pause [Space]",
                         })
-                        .padding(4)
+                        .padding(PADDING)
                         .style(container::rounded_box),
                         tooltip::Position::Top,
                     ),
@@ -276,24 +283,24 @@ impl Pomodorable {
                                 _ => Some(Message::SkipInterval),
                             }
                         ),
-                        container("Skip current interval [N]")
-                            .padding(4)
+                        container("Next interval [N]")
+                            .padding(PADDING)
                             .style(container::rounded_box),
                         tooltip::Position::Top,
                     ),
                     tooltip(
                         button(svg("assets/icons/settings.svg")).on_press(Message::Settings),
                         container("Settings [S]")
-                            .padding(4)
+                            .padding(PADDING)
                             .style(container::rounded_box),
                         tooltip::Position::Top,
                     ),
                 ]
-                .spacing(4)
+                .spacing(SPACING)
             ]
-            .spacing(4),
+            .spacing(SPACING),
         )
-        .padding(4)
+        .padding(PADDING * 2)
         .center(Length::Fill)
         .into()
     }
